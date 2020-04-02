@@ -1,0 +1,411 @@
+---
+title: "Twitter Analysis 2014"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+##Introduction
+
+In this project, we would like to understand what people's attitude to libraries and what do they say about libraries in 2014 (from 01-01-2014 to 12-31-2014). We used key twitter search terms "library", "libraries", "librarian", "librarians", "librarianship", and scrapped all tweets from twitter. Our tweets dataset contains 97199 observations. 
+
+We cleaned the data by
+1. changed all text into lower cases
+2. removed stopwords suchs as "a", "the", etc. We also took "library", "libraries", "librarian", "librarians" out from the text because they are our key searching words
+3. removed punctuation
+4. remove numbers
+5. remove stem words (A **stem** is a part of word, e.g de-, -(e)d, -(e)s.)
+
+We also calculated the sentiment score to each tweets. A positive score means positive sentiment and a negative score means negative sentiment. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(dplyr, ggplot2, tm, RColorBrewer, wordcloud, glmnet,
+               gridExtra, ranger, RTextTools, data.table,tidyverse, magrittr, gridExtra, reshape, rmarkdown, leaps, glmnet, knitr, pROC, reshape2)
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+library(data.table)
+#data <- read.csv("C:/Users/money/Desktop/EveryLibrary/Twitter/tweets_2018_sentiment.csv", encoding = "UTF-8", stringsAsFactors = FALSE, header= TRUE)
+data <- fread("tweets_2014_sentiment.csv", stringsAsFactors = FALSE, header= TRUE)
+dim(data)
+names(data); 
+object.size(data) # 
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+head(data,20)
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+names(data)
+str(data)
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+data1.text <- data$tokenized_tweets   # take the text out
+length(data1.text)
+typeof(data1.text)
+
+print(data1.text[1:10]) # view a few documents
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+mycorpus1 <- VCorpus( VectorSource(data1.text))
+mycorpus1
+typeof(mycorpus1)   ## It is a list
+# inspect the first corpus
+inspect(mycorpus1[[1]])
+# or use `as.character` to extract the text
+as.character(mycorpus1[[1]])
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+#Change to lower case
+mycorpus2 <- tm_map(mycorpus1, content_transformer(tolower))
+as.character(mycorpus2[[1]])
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+stopwordnew<-c("library","libraries","librarian","librarians","librarianship","twitter",stopwords("english"))
+stopwordnew
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+#Remove some non-content words 
+mycorpus3<- tm_map(mycorpus2, removeWords, stopwordnew)
+as.character(mycorpus3[[1]])
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+#Word frequency matrix
+dtm1 <- DocumentTermMatrix(mycorpus3)   ## library = collection of words for all documents
+dtm1
+```
+
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+#Reduce the size of the bag 
+#Cut the bag to only include the words appearing at least 0.5% of the time
+threshold <- .001*length(mycorpus3)   # 0.1% of the total documents 
+words.10 <- findFreqTerms(dtm1, lowfreq=threshold)  # words appearing at least among 1% of the documents
+length(words.10)
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+dtm.10<- DocumentTermMatrix(mycorpus3, control = list(dictionary = words.10))  
+dim(as.matrix(dtm.10))
+colnames(dtm.10)[1:50]
+```
+
+
+
+
+##The 20 most common words for all tweets
+The most common words in 2014 tweets about libraries are shown below
+```{r,eval=T,echo=FALSE}
+dtm.10.1<- TermDocumentMatrix(mycorpus3, control = list(dictionary = words.10))  
+m <- as.matrix(dtm.10.1)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 20)
+```
+
+The WordCloud of the first 150 most common words for all tweets
+```{r}
+cor.special <- brewer.pal(8,"Dark2")
+d.1 <- d[1:150,]
+wordcloud(d.1$word, d.1$freq, scale=c(4.7,.47),  # make a word cloud
+          colors=cor.special, ordered.colors=F)
+```
+
+
+
+
+
+## Most common adjective words
+
+We also would like to analyze the most common adjectives in the tweets to see if we can have a better understanding of people's attitudes to libraries.
+```{r,eval=T,echo=FALSE,results='hide', warning=FALSE}
+library(NLP)
+library(openNLP)
+
+tagPOS <-  function(x, ...) {
+  s <- as.String(x)
+  word_token_annotator <- Maxent_Word_Token_Annotator()
+  a2 <- Annotation(1L, "sentence", 1L, nchar(s))
+  a2 <- annotate(s, word_token_annotator, a2)
+  a3 <- annotate(s, Maxent_POS_Tag_Annotator(), a2)
+  a3w <- a3[a3$type == "word"]
+  POStags <- unlist(lapply(a3w$features, `[[`, "POS"))
+  POStagged <- paste(sprintf("%s/%s", s[a3w], POStags), collapse = " ")
+  list(POStagged = POStagged, POStags = POStags)
+}
+
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+tagged_str <-  tagPOS(d$word)
+acqTagSplit <- strsplit(tagged_str$POStagged," ")
+str(strsplit(acqTagSplit[[1]], "/"))
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+a <- strsplit(acqTagSplit[[1]], "/")
+aa<- as.data.frame(t(as.data.frame(a)))
+names(aa)[1] <- "word"
+adj <- aa %>% filter(V2=="JJ")
+```
+
+
+The 20 most common adjective words
+```{r,eval=T,echo=FALSE}
+adj.all <- merge(x = adj, y = d, by = "word", all.x = TRUE)
+adj.all <- adj.all[order(-adj.all$freq),]
+adj.all <- adj.all[,-2]
+head(adj.all, 20)
+#dim(adj.all)
+```
+
+
+
+The Word Cloud of the 150 most common adjective words
+```{r}
+cor.special <- brewer.pal(8,"Dark2")
+adj.cloud <- adj.all[1:150,]
+wordcloud(adj.cloud$word, adj.cloud$freq, scale=c(5,.5),  # make a word cloud
+          colors=cor.special, ordered.colors=F)
+```
+
+
+
+
+
+
+
+
+
+##Positive vs Negative
+
+We estimated the sentiment of each tweets and score them. A positive sentiment_polarity means the tweet is a positive one. A negative_polarity means the tweet is a negative one. We classified the tweets into positive and negative, and analyzed both positive and negative tweets below. 
+
+```{r,eval=T,echo=FALSE,results='hide'}
+names(data)
+## Combine the original data with the text matrix
+data1.temp <- data.frame(data,as.matrix(dtm.10) )   
+dim(data1.temp)
+names(data1.temp)[1:30]
+str(data1.temp)
+# data2 consists of text and sentiment
+data2 <- data1.temp[, c(5,7:ncol(data1.temp))]
+names(data2)[1:20]
+dim(data2)
+
+write.csv(data2, "2014_tm_freq.csv", row.names = FALSE)
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+### Splitting data
+data2 <- fread("2014_tm_freq.csv")  #dim(data2)
+names(data2)[1:20] 
+dim(data2)  
+# Reserve 10000 as test data
+set.seed(1)
+n <- nrow(data2)
+test.index <- sample(n, 10000)
+length(test.index)
+data2.test <- data2[test.index]
+data2.train <- data2[-test.index]
+names(data2.train)[1:10]
+dim(data2.train)
+```
+
+### Analysis 1: LASSO
+
+Use LASSO to analyze the relationship between each word and sentiment of people. 
+
+```{r,eval=T,echo=FALSE,results='hide'}
+y <- data2.train$sentiment_polarity
+X <- as.matrix(data2.train[, -c(1)]) # we can use as.matrix directly here
+set.seed(2)
+
+##### Be careful to run the following LASSO.
+# result.lasso <- cv.glmnet(X, y, alpha=.99, family="binomial")  # 10 minutes in my MAC
+# save(result.lasso, file="/Users/lzhao/Dropbox/STAT471/Data/TextMining.RData")
+
+#### or try `sparse.model.matrix()` which is much faster
+X1 <- sparse.model.matrix(sentiment_polarity~., data=data2.train)[, -1]
+dim(X1)
+result.lasso <- cv.glmnet(X1, y, alpha=1, family="gaussian")  
+plot(result.lasso)
+```
+
+Here are the first 50 non-zero beta words (words that actually have effect to sentiment).
+```{r,eval=T,echo=FALSE,results='hide'}
+beta.lasso <- coef(result.lasso, s="lambda.1se")   # output lasso estimates
+beta <- beta.lasso[which(beta.lasso !=0),] # non zero beta's
+beta <- as.matrix(beta);
+beta <- rownames(beta)
+beta[2:50]
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+glm.input <- as.formula(paste("sentiment_polarity", "~", paste(beta[-1],collapse = "+"))) # prepare the formulae
+result.glm <- glm(glm.input, family=gaussian, data2.train ) 
+#run glm with all the words which is saved in TextMining.RData
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+result.glm.coef <- coef(result.glm)
+result.glm.coef[2:50]
+```
+
+Prediction Error is small (0.024), so the model is acceptable. 
+```{r,eval=T,echo=FALSE,results='hide'}
+predict.glm <- predict(result.glm, data2.test, type = "response")
+testerror.glm <- mean((data2.test$sentiment_polarity - predict.glm)^2)
+testerror.glm   
+```
+
+The histogram shows the distribution of the coefficients (The distribution of words that have positive or negative effects on sentiments) From the histogram, we have large amount of words that are around 0, meaning neutural word. Number of positive coef's are slightly more than that of negative words. 
+```{r,eval=T,echo=FALSE}
+hist(result.glm.coef)
+```
+
+#### Postive word cloud
+Extract words with postitive coefficients (words that have positive corelations to sentiments)
+The following words are 20 words with most positive coef's. 
+```{r,eval=T,echo=FALSE}
+# pick up the positive coef's which are positively related to the prob of being a good review
+good.glm <- result.glm.coef[which(result.glm.coef > 0)]
+good.glm <- good.glm[-1]  # took intercept out
+#names(good.glm)  # which words are positively associated with good ratings
+
+cor.special <- brewer.pal(8,"Dark2")  # set up a pretty color scheme
+good.fre <- sort(good.glm, decreasing = TRUE) # sort the coef's
+round(good.fre, 4)[1:20] # leading 20 positive words, amazing!
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+hist(as.matrix(good.fre), breaks=30, col="red") 
+good.word <- names(good.fre)  # good words with a decreasing order in the coeff's
+```
+
+
+Below is the wordcloud of all the ppositive words from all 2014 tweets. The larger the word is, the more positive it correlates to sentiment. 
+People in 2014 thinks libraries are perfect, excellent, greatest and etc. 
+```{r,eval=T,echo=FALSE}
+wordcloud(good.word[1:100], good.fre[1:100], scale=c(2.3,.3),  # make a word cloud
+          colors=cor.special, ordered.colors=F)
+```
+
+
+
+#### Negative word cloud
+
+Similarly to the negative coef's which is positively correlated to be a tweet with negative sentiment. The following words are 20 words with most negative coef's. 
+```{r,eval=T,echo=FALSE}
+bad.glm <- result.glm.coef[which(result.glm.coef < 0)]
+#names(bad.glm)[1:50]
+
+cor.special <- brewer.pal(6,"Dark2")
+bad.fre <- sort(-bad.glm, decreasing = TRUE)
+round(bad.fre, 4)[1:20]
+```
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+hist(as.matrix(bad.fre), breaks=30, col="green")
+bad.word <- names(bad.fre)
+```
+
+Below is the wordcloud of all the negative words from all 2014 tweets. The larger the word is, the more negative it correlates to sentiment. 
+People in 2014 thinks libraries are bad, sad and crazy. Word "cold" could imply the air conditioning or hear in libraries are not good. "Game" could infer to that people saw many people playing game in libraries and people feel bad about it. "Little" and "small" may imply that people thinks libraries are small and have little books. "Behind" may implies libraries may be a little outdated. We can dig into each word and figure out how could libraries improve themselves.  
+
+```{r,eval=T,echo=FALSE}
+wordcloud(bad.word[1:150], bad.fre[1:150],scale=c(3.5,.3),  
+          color="darkgreen", ordered.colors=F)
+```
+
+
+#### Put two clouds together
+```{r,eval=T,echo=FALSE,warning=FALSE}
+par(mfrow=c(1,2))
+cor.special <- brewer.pal(8,"Dark2") 
+wordcloud(good.word[1:100], good.fre[1:100], scale=c(2.4,.3),  # make a word cloud
+          colors=cor.special, ordered.colors=F)
+wordcloud(bad.word[1:100], bad.fre[1:100],scale=c(3.5,.3),  
+          color="darkgreen", ordered.colors=F)
+```
+
+
+
+
+## Sentiment vs Month
+Below is a graph of people's sentiment to library during months. We see fluctuation from January to December. After statistical analysis we found all numbers random about the mean, which mean the fluctuation of sentiment is just due to randomness. (See Excel document (sentiment_graph_2014) for specific statistical analysis). The mean of sentiment of 2014 is 0.11. In general, the overall sentiment of tweets is positive. 
+
+```{r,eval=T,echo=FALSE}
+knitr::include_graphics("sentiment2014.jpg")
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+data$date <-as.Date(data$date,format="%d-%b-%y")
+#head(data,10)
+```
+
+```{r,eval=T,echo=FALSE,results='hide'}
+data$Month <- months(data$date)
+#head(data,10)
+```
+
+
+```{r}
+sent <- data %>% group_by(Month) %>% summarize(sent_mean = mean(sentiment_polarity))
+sent
+```
+
+```{r}
+summary(sent$sent_mean)
+```
+
+
+
+```{r,eval=T,echo=FALSE,results='hide'}
+Q1 <- summary(sent$sent_mean)[["1st Qu."]]
+Q3 <- summary(sent$sent_mean)[["3rd Qu."]]
+upper <- max(sent$sent_mean) + 1.5*(Q3-Q1)
+lower <- min(sent$sent_mean) - 1.5*(Q3-Q1)
+upper
+lower
+```
+
+ 
+
+##Pie chart of percentage of sentiment
+
+From the following pie chart, we can tell 41.35% people have postitive feeling about library, 48.15% have neutural feeling and 10.50% have negative feelings.
+
+```{r,eval=T,echo=FALSE}
+knitr::include_graphics("pie2014.jpg")
+```
+
+
